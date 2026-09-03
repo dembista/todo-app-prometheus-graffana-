@@ -1,0 +1,10 @@
+# Copiez ce fichier en terraform.tfvars et remplissez vos propres valeurs.
+# terraform.tfvars ne doit JAMAIS être commité (il est dans .gitignore).
+
+admin_ip             = "VOTRE_IP_PUBLIQUE/32" # résultat de `curl ifconfig.me`, suivi de /32
+ssh_public_key_path  = "~/.ssh/medishop-todo.pub"
+
+# Optionnel — valeurs par défaut déjà définies dans variables.tf
+# aws_region   = "eu-west-3"
+# project_name = "medishop-todo"
+# instance_type = "t3.micro"

@@ -1,0 +1,78 @@
+---
+- name: Installer Nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: true
+
+- name: Supprimer le site par defaut
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+
+- name: Verifier si un certificat existe deja
+  stat:
+    path: "/etc/letsencrypt/live/{{ domain_name }}/fullchain.pem"
+  register: cert_check
+  when: domain_name != "_"
+
+- name: Deployer la configuration Nginx (etat courant, avec ou sans SSL)
+  template:
+    src: todo.conf.j2
+    dest: /etc/nginx/sites-available/todo.conf
+    mode: "0644"
+  vars:
+    ssl_enabled: "{{ (domain_name != '_') and (cert_check.stat.exists | default(false)) }}"
+  notify: reload nginx
+
+- name: Activer le site
+  file:
+    src: /etc/nginx/sites-available/todo.conf
+    dest: /etc/nginx/sites-enabled/todo.conf
+    state: link
+  notify: reload nginx
+
+- name: Demarrer et activer Nginx
+  service:
+    name: nginx
+    state: started
+    enabled: true
+
+- name: Appliquer immediatement la config HTTP avant Certbot
+  meta: flush_handlers
+
+- name: Installer Certbot et le plugin Nginx
+  apt:
+    name:
+      - certbot
+      - python3-certbot-nginx
+    state: present
+  when: domain_name != "_"
+
+- name: Obtenir le certificat Let's Encrypt (idempotent, ne renouvelle que si necessaire)
+  command: >
+    certbot certonly --nginx
+    -d {{ domain_name }}
+    --non-interactive --agree-tos
+    -m {{ certbot_email }}
+    --keep-until-expiring
+  args:
+    creates: "/etc/letsencrypt/live/{{ domain_name }}/fullchain.pem"
+  when: domain_name != "_"
+
+- name: Reverifier l'existence du certificat apres Certbot
+  stat:
+    path: "/etc/letsencrypt/live/{{ domain_name }}/fullchain.pem"
+  register: cert_check_after
+  when: domain_name != "_"
+
+- name: Redeployer la configuration Nginx avec le HTTPS active
+  template:
+    src: todo.conf.j2
+    dest: /etc/nginx/sites-available/todo.conf
+    mode: "0644"
+  vars:
+    ssl_enabled: "{{ (domain_name != '_') and (cert_check_after.stat.exists | default(false)) }}"
+  notify: reload nginx
+  when: domain_name != "_"

@@ -1,0 +1,60 @@
+---
+- name: Creer le dossier de configuration monitoring
+  file:
+    path: /opt/monitoring/grafana/provisioning/datasources
+    state: directory
+    mode: "0755"
+    recurse: true
+
+- name: Creer le dossier des dashboards Grafana
+  file:
+    path: /opt/monitoring/grafana/provisioning/dashboards
+    state: directory
+    mode: "0755"
+
+- name: Generer prometheus.yml
+  template:
+    src: prometheus.yml.j2
+    dest: /opt/monitoring/prometheus.yml
+    mode: "0644"
+
+- name: Copier la datasource Grafana (Prometheus)
+  copy:
+    src: grafana-datasource.yml
+    dest: /opt/monitoring/grafana/provisioning/datasources/datasource.yml
+    mode: "0644"
+
+- name: Copier le provider de dashboards Grafana
+  copy:
+    src: grafana-dashboard-provider.yml
+    dest: /opt/monitoring/grafana/provisioning/dashboards/provider.yml
+    mode: "0644"
+
+- name: Telecharger le dashboard "Node Exporter Full"
+  get_url:
+    url: https://grafana.com/api/dashboards/1860/revisions/37/download
+    dest: /opt/monitoring/grafana/provisioning/dashboards/node-exporter-full.json
+    mode: "0644"
+
+- name: Deployer Prometheus
+  community.docker.docker_container:
+    name: prometheus
+    image: prom/prometheus:latest
+    restart_policy: unless-stopped
+    network_mode: host
+    volumes:
+      - /opt/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+- name: Deployer Grafana
+  community.docker.docker_container:
+    name: grafana
+    image: grafana/grafana:latest
+    restart_policy: unless-stopped
+    network_mode: host
+    env:
+      GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password }}"
+      GF_SERVER_HTTP_PORT: "{{ grafana_port | string }}"
+    volumes:
+      - /opt/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana

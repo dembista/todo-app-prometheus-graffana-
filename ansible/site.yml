@@ -1,0 +1,27 @@
+---
+# Playbook de provisioning MediShop Todo App (TP DevOps section 3.2)
+# Idempotent : peut être rejoué sans casser l'existant.
+
+- name: Provisionnement commun (Docker + Docker Compose sur les 3 machines)
+  hosts: all
+  become: true
+  roles:
+    - docker
+
+- name: Provisionnement specifique au Front (Nginx + reverse proxy)
+  hosts: front
+  become: true
+  roles:
+    - nginx_front
+
+- name: Metriques systeme (node_exporter) sur le Front
+  hosts: front
+  become: true
+  roles:
+    - node_exporter
+
+- name: Prometheus + Grafana (Front uniquement)
+  hosts: front
+  become: true
+  roles:
+    - monitoring
