@@ -130,9 +130,12 @@ todo-app/
 │       ├── docker/            # Installe Docker + Compose (3 machines)
 │       ├── nginx_front/       # Nginx + reverse proxy + Certbot (Front uniquement)
 │       ├── node_exporter/     # Métriques système (Front uniquement)
-│       └── monitoring/        # Prometheus + Grafana (Front uniquement)
+│       └── monitoring/        # Prometheus + Grafana + alerting (Front uniquement)
 │           ├── templates/prometheus.yml.j2
 │           └── files/
+│               ├── alert.rules.yml            # Règles d'alerte (serveur, conteneurs, CPU, failles, redondances)
+│               ├── alertmanager.yml           # Notifications d'alertes (webhook/email)
+│               ├── dashboard-todo.json        # Dashboard custom (conteneurs + alertes)
 │               ├── grafana-datasource.yml
 │               └── grafana-dashboard-provider.yml
 ├── scripts/
@@ -424,15 +427,51 @@ Déclenché sur chaque `push` vers `main` :
 
 ## Supervision (Prometheus / Grafana)
 
-Stack de monitoring installée sur le Front, limitée à l'infrastructure de
-cette machine (CPU, RAM, disque, réseau, uptime).
+Stack de monitoring installée sur le Front : infrastructure de la machine
+(CPU, RAM, disque, réseau, uptime), état et santé des conteneurs Docker, et
+**alerting** sur tout ça (état serveur, CPU, conteneurs, failles, redondances).
 
 **Composants (tous sur le Front, `network_mode: host`) :**
 - `node_exporter` (port 9100) — expose les métriques système
-- `prometheus` (port 9090, non exposé à Internet) — scrape node_exporter en local
-- `grafana` (port 3001) — affiche le dashboard "Node Exporter Full"
+- `cadvisor` (port 9101) — expose les métriques des conteneurs Docker
+  (CPU, mémoire, restarts, dernière activité)
+- `prometheus` (port 9090, non exposé à Internet) — scrape node_exporter et
+  cAdvisor en local, évalue les règles d'alerte
+- `alertmanager` (port 9093, non exposé à Internet) — reçoit les alertes et
+  les achemine vers les canaux de notification (webhook/email, à configurer)
+- `grafana` (port 3001) — affiche les dashboards
 
-**Accès :**
+**Alertes (`alert.rules.yml`) :**
+
+Le fichier `ansible/roles/monitoring/files/alert.rules.yml` définit toutes les
+règles d'alerte, regroupées par thème :
+
+| Groupe | Ce qu'il surveille | Exemples de règles |
+| ------ | ------------------ | ------------------ |
+| `etat-serveur.rules` | La machine | ServeurInjoignable, CpuServeurEleve (>85%), MemoireServeurElevee (>90%), DisquePresquePlein (<15%), DisqueVaSeRemplir, ChargeServeurElevee, ServeurRedemarre, HorlogeServeurDecalee |
+| `etat-conteneurs.rules` | Les conteneurs Docker | ConteneurInjoignable (>60s sans signal), BoucleDeRedemarrageConteneur (>3 restarts/15 min), CpuConteneurEleve (>80%), MemoireConteneurElevee (>512 Mo) |
+| `failles-redondances.rules` | Pannes et redondance | CibleDeScrapeHorsLigne, RedondancePerdue (job entier disparu), RedondancePartielle, PointDeDefaillanceUnique |
+| `prometheus.rules` | La supervision elle-même | PrometheusRedemarrageFrequent, PrometheusStockageRisque |
+
+Chaque alerte porte un label `severity` (`critical`/`warning`/`info`) et un
+type (`serveur`/`conteneur`/`faille`/`redondance`/`supervision`), ce qui
+permet de filtrer facilement dans Prometheus et Grafana.
+
+**Dashboards Grafana (provisionnés automatiquement) :**
+- "Node Exporter Full" — métriques système de la machine (dashboard 1860)
+- "MediShop Todo — Supervision complète" (`dashboard-todo.json`) — vue
+  conteneurs (CPU, mémoire, restarts, dernière activité), état des cibles
+  (`up`), charge serveur, et **liste des alertes déclenchées**
+
+**Voir les alertes en temps réel :**
+- Dans Prometheus : `http://<FRONT_IP>:9090/alerts` (via tunnel SSH,
+  `ssh -L 9090:localhost:9090 ubuntu@<FRONT_IP>`)
+- Dans Grafana : le panneau "Alertes déclenchées" du dashboard, ou l'onglet
+  "Alerting" de l'interface Grafana
+- Dans Alertmanager : `ssh -L 9093:localhost:9093` puis tapes
+  `http://localhost:9093`
+
+**Accès Grafana :**
 
 ```
 http://<FRONT_PUBLIC_IP>:3001
@@ -441,9 +480,8 @@ http://<FRONT_PUBLIC_IP>:3001
 Réservé à `admin_ip` (même règle que le SSH). Identifiants : `admin` / le
 mot de passe défini dans `group_vars/front/vault.yml`.
 
-Le dashboard "Node Exporter Full" est provisionné automatiquement au premier
-déploiement d'Ansible — aucune configuration manuelle nécessaire dans
-l'interface Grafana.
+Les dashboards sont provisionnés automatiquement au premier déploiement
+d'Ansible — aucune configuration manuelle nécessaire dans l'interface Grafana.
 
 ## Qualité de code (SonarCloud)
 

@@ -18,6 +18,18 @@
     dest: /opt/monitoring/prometheus.yml
     mode: "0644"
 
+- name: Copier les regles d'alerte Prometheus
+  copy:
+    src: alert.rules.yml
+    dest: /opt/monitoring/alert-rules.yml
+    mode: "0644"
+
+- name: Copier la configuration Alertmanager
+  copy:
+    src: alertmanager.yml
+    dest: /opt/monitoring/alertmanager.yml
+    mode: "0644"
+
 - name: Copier la datasource Grafana (Prometheus)
   copy:
     src: grafana-datasource.yml
@@ -36,6 +48,26 @@
     dest: /opt/monitoring/grafana/provisioning/dashboards/node-exporter-full.json
     mode: "0644"
 
+- name: Copier le dashboard custom (conteneurs + alertes)
+  copy:
+    src: dashboard-todo.json
+    dest: /opt/monitoring/grafana/provisioning/dashboards/dashboard-todo.json
+    mode: "0644"
+
+- name: Deployer cAdvisor (metriques conteneurs)
+  community.docker.docker_container:
+    name: cadvisor
+    image: gcr.io/cadvisor/cadvisor:latest
+    restart_policy: unless-stopped
+    network_mode: host
+    privileged: true
+    command: --port=9101 --docker_only=true --housekeeping_interval=10s
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
 - name: Deployer Prometheus
   community.docker.docker_container:
     name: prometheus
@@ -44,7 +76,18 @@
     network_mode: host
     volumes:
       - /opt/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /opt/monitoring/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
       - prometheus_data:/prometheus
+
+- name: Deployer Alertmanager (notification des alertes)
+  community.docker.docker_container:
+    name: alertmanager
+    image: prom/alertmanager:latest
+    restart_policy: unless-stopped
+    network_mode: host
+    command: --config.file=/etc/alertmanager/alertmanager.yml
+    volumes:
+      - /opt/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
 
 - name: Deployer Grafana
   community.docker.docker_container:

@@ -1,0 +1,247 @@
+groups:
+  # ==========================================================================
+  # 1. ETAT SERVEUR (node_exporter : CPU, memoire, disque, charge, reboot)
+  # ==========================================================================
+  - name: etat-serveur.rules
+    rules:
+      - alert: ServeurInjoignable
+        expr: up{job="node_exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          type: serveur
+        annotations:
+          summary: "Serveur injoignable ({{ $labels.instance }})"
+          description: >-
+            Le node_exporter ne repond plus sur {{ $labels.instance }} depuis
+            plus d'une minute. Le serveur est probablement arrete, en panne
+            reseau ou surcharge.
+
+      - alert: CpuServeurEleve
+        expr: (100 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+          type: serveur
+        annotations:
+          summary: "CPU serveur eleve : {{ $labels.instance }}"
+          description: >-
+            Utilisation CPU moyenne (5 min) de "{{ $labels.instance }}"
+            a {{ $value | humanize }}% alors que le seuil est de 85%.
+            Verifier les processus ou conteneurs consommateurs.
+
+      - alert: MemoireServeurElevee
+        expr: ((node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+          type: serveur
+        annotations:
+          summary: "Memoire vive presque epuisee ({{ $labels.instance }})"
+          description: >-
+            Utilisation memoire de "{{ $labels.instance }}" a
+            {{ $value | humanize }}% (seuil 90%). Risque de swap ou d'OOM killer.
+
+      - alert: DisquePresquePlein
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 15
+        for: 5m
+        labels:
+          severity: critical
+          type: serveur
+        annotations:
+          summary: "Disque racine presque plein ({{ $labels.instance }})"
+          description: >-
+            Il reste moins de 15% d'espace sur / de "{{ $labels.instance }}".
+            Nettoyer les logs/images Docker en trop.
+
+      - alert: DisqueVaSeRemplir
+        expr: predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[6h], 4*60*60) < 0 and (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 25
+        for: 30m
+        labels:
+          severity: warning
+          type: serveur
+        annotations:
+          summary: "Disque racine va se remplir sous 4h ({{ $labels.instance }})"
+          description: >-
+            Tendance de remplissage du disque / de "{{ $labels.instance }}" :
+            il sera plein sous environ 4 heures au rythme actuel.
+
+      - alert: ChargeServeurElevee
+        expr: node_load1 > count by (instance) (node_cpu_seconds_total{mode="system"})
+        for: 15m
+        labels:
+          severity: warning
+          type: serveur
+        annotations:
+          summary: "Charge systeme (load1) superieure au nombre de coeurs"
+          description: >-
+            La charge moyenne 1 min de "{{ $labels.instance }}" vaut
+            {{ $value }} et depasse le nombre de coeurs disponibles :
+            la file d'attente CPU s'allonge.
+
+      - alert: ServeurRedemarre
+        expr: node_time_seconds - node_boot_time_seconds < 300
+        for: 5m
+        labels:
+          severity: warning
+          type: serveur
+        annotations:
+          summary: "Le serveur {{ $labels.instance }} vient de redemarrer"
+          description: >-
+            Le serveur a demarre il y a moins de 5 minutes. Verifier que tous
+            les services et conteneurs sont bien remontes.
+
+      - alert: HorlogeServeurDecalee
+        expr: abs(node_time_seconds - time()) > 30
+        for: 5m
+        labels:
+          severity: warning
+          type: serveur
+        annotations:
+          summary: "Horloge du serveur decalee ({{ $labels.instance }})"
+          description: >-
+            Ecart de plus de 30s entre l'horloge de "{{ $labels.instance }}"
+            et Prometheus. Activer NTP (chrony/ntpd) pour eviter des bugs
+            de certificats et de logs.
+
+  # ==========================================================================
+  # 2. ETAT CONTENEUR (cAdvisor : processus Docker, restart, CPU, memoire)
+  # ==========================================================================
+  - name: etat-conteneurs.rules
+    rules:
+      - alert: ConteneurInjoignable
+        expr: time() - container_last_seen{name=~".+"} > 60
+        for: 1m
+        labels:
+          severity: critical
+          type: conteneur
+        annotations:
+          summary: "Conteneur arrete/illisible : {{ $labels.name }}"
+          description: >-
+            Aucune metrique reçue depuis 60s pour le conteneur
+            "{{ $labels.name }}" (image {{ $labels.image }}).
+            Il est probablement down ou en crash loop.
+
+      - alert: BoucleDeRedemarrageConteneur
+        expr: increase(container_restart_count{name=~".+"}[15m]) > 3
+        for: 5m
+        labels:
+          severity: critical
+          type: conteneur
+        annotations:
+          summary: "Boucle de redemarrage : {{ $labels.name }}"
+          description: >-
+            Le conteneur "{{ $labels.name }}" a redemarre plus de 3 fois en
+            15 minutes ({{ $value | humanize }} redemarrages). Crash loop — le
+            processus s'arrete des qu'il demarre.
+
+      - alert: CpuConteneurEleve
+        expr: sum(rate(container_cpu_usage_seconds_total{image!=""}[5m])) by (name) / sum(machine_cpu_cores) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          type: conteneur
+        annotations:
+          summary: "CPU conteneur eleve : {{ $labels.name }}"
+          description: >-
+            Le conteneur "{{ $labels.name }}" consomme {{ $value | humanize }}%
+            du CPU total de la machine (seuil 80%) depuis plus de 10 minutes.
+
+      - alert: MemoireConteneurElevee
+        expr: sum(container_memory_working_set_bytes{image!=""}) by (name) > 536870912
+        for: 10m
+        labels:
+          severity: warning
+          type: conteneur
+        annotations:
+          summary: "Memoire conteneur > 512 Mo : {{ $labels.name }}"
+          description: >-
+            Le conteneur "{{ $labels.name }}" utilise
+            {{ $value | humanize1024 }} de memoire (seuil 512 Mo).
+            Rapprochement du OOM limit possible.
+
+  # ==========================================================================
+  # 3. FAILLES ET REDONDANCES
+  #    - failles      : cible de scrape hors ligne, job disparu, echec Prometheus
+  #    - redondances  : instance(s) perdue(s) alors qu'un repli etait attendu
+  # ==========================================================================
+  - name: failles-redondances.rules
+    rules:
+      - alert: CibleDeScrapeHorsLigne
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+          type: faille
+        annotations:
+          summary: "Faille detectee : cible {{ $labels.job }} ({{ $labels.instance }})"
+          description: >-
+            La cible de collecte "{{ $labels.instance }}" du job
+            "{{ $labels.job }}" ne repond plus. Les metriques de cette
+            composante sont perdues — panne ou faille de supervision.
+
+      - alert: RedondancePerdue
+        expr: absent(up{job=~"node_exporter|cadvisor"})
+        for: 5m
+        labels:
+          severity: critical
+          type: redondance
+        annotations:
+          summary: "Toutes les redondances du job disparues"
+          description: >-
+            Aucune instance du job "node_exporter" ou "cadvisor" n'est plus
+            scrapée. Plus aucun repli : les metriques systeme/conteneurs sont
+            integralement perdues.
+
+      - alert: RedondancePartielle
+        expr: count(up{job="node_exporter"} == 0) > 0 and count(up{job="node_exporter"}) >= 2
+        for: 5m
+        labels:
+          severity: warning
+          type: redondance
+        annotations:
+          summary: "Redondance partielle : il reste {{ $value }} instance(s)"
+          description: >-
+            Sur les instances node_exporter attendues, certaines sont down.
+            La redondance est partiellement compromise : une seule instance
+            restante devient un point de defaillance unique.
+
+      - alert: PointDeDefaillanceUnique
+        expr: count(up{job="node_exporter"} == 1) == 1 and count(up{job="node_exporter"}) < 2
+        labels:
+          severity: info
+          type: redondance
+        annotations:
+          summary: "Architecture mono-instance : aucun repli disponible"
+          description: >-
+            Toute la supervision repose sur une seule instance. En cas de
+            panne machine, aucune redondance ne prend le relais. (Info :
+            prevu dans cette architecture — a etudier pour la HA.)
+
+  # ==========================================================================
+  # 4. SANTE DE PROMETHEUS LUI-MEME
+  # ==========================================================================
+  - name: prometheus.rules
+    rules:
+      - alert: PrometheusRedemarrageFrequent
+        expr: changes(process_start_time_seconds{job="prometheus"}[15m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+          type: supervision
+        annotations:
+          summary: "Prometheus redemarre anormalement souvent"
+          description: >-
+            Le processus Prometheus a redemarre plus de 2 fois en 15 minutes.
+            Verifier sa memoire (prometheus_data) et sa configuration.
+
+      - alert: PrometheusStockageRisque
+        expr: predict_linear(prometheus_tsdb_head_series[6h], 7*24*60*60) > prometheus_tsdb_head_series + 100000
+        labels:
+          severity: info
+          type: supervision
+        annotations:
+          summary: "Nombre de series en croissance rapide"
+          description: >-
+            Le volume de series TSDB augmente fortement. Ajuster les
+            rule_evaluations ou allonger la retention si besoin.

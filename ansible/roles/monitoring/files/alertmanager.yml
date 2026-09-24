@@ -1,0 +1,39 @@
+global:
+  # Resolution time of a group before the notification is "resolved"
+  resolve_timeout: 5m
+  # --- Repete les notifications si l'alerte n'est pas resolu ---
+  repeat_interval: 4h
+  # --- Delai avant l'envoi du premier message ---
+  group_wait: 30s
+  # --- Regroupe les alertes similaires dans un seul message ---
+  group_interval: 5m
+
+route:
+  receiver: "webhook-generique"
+  group_by: ["alertname", "instance"]
+  # Defaut : tout est accepte
+  continue: false
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: "webhook-generique"
+      continue: true
+    - matchers:
+        - severity = "warning"
+      receiver: "webhook-generique"
+
+receivers:
+  - name: "webhook-generique"
+    webhook_configs:
+      # Pointez ici votre serveur/robot (Slack, Teams, Discord, n8n, ...)
+      - url: "http://localhost:9087/alert"
+        send_resolved: true
+
+  - name: "email"
+    email_configs:
+      - to: "admin@example.com"
+        from: "monitoring@example.com"
+        smarthost: "smtp.example.com:587"
+        auth_username: "monitoring@example.com"
+        auth_password: "mot_de_passe_smtp"
+        send_resolved: true

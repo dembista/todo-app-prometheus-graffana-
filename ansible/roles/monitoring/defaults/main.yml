@@ -1,2 +1,4 @@
 ---
 grafana_port: 3001
+alertmanager_port: 9093
+cadvisor_port: 9101
